@@ -4,6 +4,7 @@
 struct registers
 {
     unsigned char a;
+    // TODO should these be individual flags instead of one char?
     unsigned char f;
     unsigned char b;
     unsigned char c;

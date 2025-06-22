@@ -1,14 +1,21 @@
 #include <cstdint>
+#include <cstdio>
 #include <iomanip>
 #include <iostream>
 
 #include "opcode.h"
+#include "register.h"
 
 #define HEX( x ) "setw(2) << setfill('0') << hex << (int)( x )"
 
+uint16_t convert_bytes_to_word(unsigned char low, unsigned char high)
+{
+    return static_cast<uint16_t>(low) | static_cast<uint16_t>(high) << 8;
+}
+
 int main()
 {
-    unsigned char mem[1000];
+    unsigned char memory[0xFFFF];
     FILE *file;
     errno_t error = fopen_s(&file, "C:\\Users\\tgrieger\\Source\\repos\\gbemu\\artifacts\\dmg_boot.bin", "rb");
     if (error)
@@ -18,7 +25,7 @@ int main()
 
     // Read all contents of the file into the memory buffer
     int pos = 0;
-    while (fread(&mem[pos++], 1, 1, file))
+    while (fread(&memory[pos], 1, 1, file))
     {
         pos++;
     }
@@ -27,19 +34,89 @@ int main()
 
     uint16_t program_counter {};
     uint16_t stack_pointer {};
+    registers regs {};
     while (true)
     {
-        switch (mem[program_counter])
+        switch (memory[program_counter])
         {
         case NO_OP:
            program_counter++;
            break;
-        case LOAD_SP_FROM_MEMORY:
-            stack_pointer = static_cast<uint16_t>(mem[program_counter + 1]) | static_cast<uint16_t>(mem[program_counter + 2]) << 8;
+        case JUMP_IF_Z_IS_ZERO:
+            // If the z flag is 0, jump some number of bytes based on the next byte
+            if ((regs.f & 0b00000001) == 0b00000000)
+            {
+                program_counter += memory[program_counter + 1];
+            }
+
+            program_counter += 2;
+            break;
+        case LOAD_HL_FROM_MEMORY:
+            regs.l = memory[program_counter + 1];
+            regs.h = memory[program_counter + 2];
             program_counter += 3;
             break;
+        case LOAD_SP_FROM_MEMORY:
+            stack_pointer = convert_bytes_to_word(memory[program_counter + 1], memory[program_counter + 2]);
+            program_counter += 3;
+            break;
+        case LOAD_A_INTO_HL_CONTENTS_AND_DECREMENT_HL:
+            {
+                uint16_t hl = convert_bytes_to_word(regs.l, regs.h);
+                memory[hl] = regs.a;
+                hl--;
+                regs.h = hl >> 8 & 0xFF;
+                regs.l = hl & 0xFF;
+
+                program_counter++;
+            }
+            break;
+        case XOR_A:
+            // This case will always result in A being 0, no need to actually XOR A with A
+            // regs.a = regs.a ^ regs.a;
+            regs.a = 0;
+
+            // Because A will always be 0, we will always clear all flags except Z and set Z to 1
+            /*
+            regs.f = 0;
+            if (regs.a == 0)
+            {
+                // Set Z to 1 if the result of the XOR was 0
+                regs.f |= 0b00000001;
+            }
+            */
+
+            regs.f = 0b00000001;
+
+            program_counter++;
+            break;
+        case LOAD_A_FROM_POINTER:
+            regs.a = memory[convert_bytes_to_word(memory[program_counter + 1], memory[program_counter + 2])];
+            program_counter += 3;
+            break;
+        case USE_EXTENDED_OP_CODE:
+            switch (memory[program_counter + 1])
+            {
+            case COPY_INVERSE_BIT_7_H_TO_Z:
+                // Set the h flag to 1
+                regs.f |= 0b00000100;
+
+                // Set the c flag to 0
+                regs.f &= 0b00001101;
+
+                // Set the z flag to the compliment of the 7th bit of the h register
+                // General formula for setting the nth bit to x: `number = number & ~(1 << n) | (x << n)`
+                regs.f &= ~1 | ~(regs.h >> 7) & 0b00000001;
+                break;
+            default:
+                std::cerr << "Unknown extended opcode: 0x" << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(memory[program_counter + 1]) << " at pc 0x" << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(program_counter + 1) << '\n';
+                return 1;
+            }
+            program_counter += 2;
+            break;
         default:
-            std::cout << "Unknown opcode: 0x" << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(mem[program_counter]) << " at pc 0x" << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(program_counter) << '\n';
+            // TODO is there a way to format to hex?
+            std::cerr << "Unknown opcode: 0x" << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(memory[program_counter]) << " at pc 0x" << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(program_counter) << '\n';
             return 1;
         }
     }
