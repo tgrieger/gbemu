@@ -10,8 +10,12 @@ enum op_code : unsigned char
     LOAD_A_INTO_HL_CONTENTS_AND_DECREMENT_HL = 0x32,
     SUBTRACT_C_INTO_A = 0x9F,
     XOR_A = 0xAF,
+    JUMP = 0xC3,
     USE_EXTENDED_OP_CODE = 0xCB,
-    LOAD_A_FROM_POINTER = 0xFA
+    LOAD_A_FROM_LOW_POINTER = 0xF0,
+    DISABLE_IME = 0xF3,
+    LOAD_A_FROM_POINTER = 0xFA,
+    COMPARE_A_TO_MEMORY = 0xFE
 };
 
 enum extended_op_code

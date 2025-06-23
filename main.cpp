@@ -17,7 +17,7 @@ int main()
 {
     unsigned char memory[0xFFFF];
     FILE *file;
-    errno_t error = fopen_s(&file, "C:\\Users\\tgrieger\\Source\\repos\\gbemu\\artifacts\\dmg_boot.bin", "rb");
+    errno_t error = fopen_s(&file, "C:\\Users\\tgrieger\\Source\\repos\\gbemu\\artifacts\\bgbtest.gb", "rb");
     if (error)
     {
         std::cout << error << std::endl;
@@ -32,9 +32,10 @@ int main()
 
     fclose(file);
 
-    uint16_t program_counter {};
+    uint16_t program_counter { 0x100 };
     uint16_t stack_pointer {};
     registers regs {};
+    bool ime { false };
     while (true)
     {
         switch (memory[program_counter])
@@ -44,9 +45,10 @@ int main()
            break;
         case JUMP_IF_Z_IS_ZERO:
             // If the z flag is 0, jump some number of bytes based on the next byte
-            if ((regs.f & 0b00000001) == 0b00000000)
+            if (!get_z(regs.f))
             {
-                program_counter += memory[program_counter + 1];
+                // TODO learn more about pros and cons of static_cast
+                program_counter += static_cast<char>(memory[program_counter + 1]);
             }
 
             program_counter += 2;
@@ -64,6 +66,8 @@ int main()
             {
                 uint16_t hl = convert_bytes_to_word(regs.l, regs.h);
                 memory[hl] = regs.a;
+
+                // Decrement the whole of hl before breaking it back into its parts
                 hl--;
                 regs.h = hl >> 8 & 0xFF;
                 regs.l = hl & 0xFF;
@@ -90,23 +94,48 @@ int main()
 
             program_counter++;
             break;
+        case JUMP:
+            program_counter = convert_bytes_to_word(memory[program_counter + 1], memory[program_counter + 2]);
+            break;
+        case LOAD_A_FROM_LOW_POINTER:
+            {
+                uint16_t address = convert_bytes_to_word(memory[program_counter + 1], 0xFF);
+                regs.a = memory[address];
+            }
+
+            program_counter += 2;
+            break;
+        case DISABLE_IME:
+            ime = false;
+            program_counter++;
+            break;
         case LOAD_A_FROM_POINTER:
             regs.a = memory[convert_bytes_to_word(memory[program_counter + 1], memory[program_counter + 2])];
             program_counter += 3;
+            break;
+        case COMPARE_A_TO_MEMORY:
+            set_n(regs.f, true);
+            set_z(regs.f, regs.a == memory[program_counter + 1]);
+
+            // TODO understand these better
+            set_h(regs.f, (regs.a & 0x0F) < (memory[program_counter + 1] & 0x0F));
+            set_c(regs.f, regs.a < memory[program_counter + 1]);
+
+            program_counter += 2;
             break;
         case USE_EXTENDED_OP_CODE:
             switch (memory[program_counter + 1])
             {
             case COPY_INVERSE_BIT_7_H_TO_Z:
                 // Set the h flag to 1
-                regs.f |= 0b00000100;
+                set_h(regs.f, true);
 
                 // Set the c flag to 0
-                regs.f &= 0b00001101;
+                set_c(regs.f, false);
 
                 // Set the z flag to the compliment of the 7th bit of the h register
                 // General formula for setting the nth bit to x: `number = number & ~(1 << n) | (x << n)`
-                regs.f &= ~1 | ~(regs.h >> 7) & 0b00000001;
+                set_z(regs.f, ~(regs.h >> 7) & 0b00000001);
                 break;
             default:
                 std::cerr << "Unknown extended opcode: 0x" << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(memory[program_counter + 1]) << " at pc 0x" << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(program_counter + 1) << '\n';
