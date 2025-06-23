@@ -90,7 +90,8 @@ int main()
             }
             */
 
-            regs.f = 0b00000001;
+            // NOTE - this doesn't use the typical set method to set z to 1 and all other flags to 0
+            regs.f = 0b10000000;
 
             program_counter++;
             break;
@@ -117,7 +118,7 @@ int main()
             set_n(regs.f, true);
             set_z(regs.f, regs.a == memory[program_counter + 1]);
 
-            // TODO understand these better
+            // TODO understand how the half carry and carry flags are being set better
             set_h(regs.f, (regs.a & 0x0F) < (memory[program_counter + 1] & 0x0F));
             set_c(regs.f, regs.a < memory[program_counter + 1]);
 
