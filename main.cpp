@@ -6,8 +6,6 @@
 #include "opcode.h"
 #include "register.h"
 
-#define HEX( x ) "setw(2) << setfill('0') << hex << (int)( x )"
-
 uint16_t convert_bytes_to_word(unsigned char low, unsigned char high)
 {
     return static_cast<uint16_t>(low) | static_cast<uint16_t>(high) << 8;
