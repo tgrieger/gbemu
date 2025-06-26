@@ -4,6 +4,10 @@
 enum op_code : unsigned char
 {
     NO_OP = 0x00,
+    LOAD_BC_FROM_MEMORY = 0x01,
+    LOAD_A_INTO_BC_POINTER = 0x02,
+    INCREMENT_BC = 0x03,
+    INCREMENT_B = 0x04,
     JUMP_IF_Z_IS_ZERO = 0x20,
     LOAD_HL_FROM_MEMORY = 0x21,
     LOAD_SP_FROM_MEMORY = 0x31,

@@ -11,6 +11,16 @@ uint16_t convert_bytes_to_word(unsigned char low, unsigned char high)
     return static_cast<uint16_t>(low) | static_cast<uint16_t>(high) << 8;
 }
 
+unsigned char get_high_byte(const uint16_t word)
+{
+    return word >> 8 & 0xFF;
+}
+
+unsigned char get_low_byte(const uint16_t word)
+{
+    return word & 0xFF;
+}
+
 int main()
 {
     unsigned char memory[0xFFFF];
@@ -41,6 +51,36 @@ int main()
         case NO_OP:
            program_counter++;
            break;
+        case LOAD_BC_FROM_MEMORY:
+            regs.b = memory[program_counter + 2];
+            regs.c = memory[program_counter + 1];
+            program_counter += 3;
+            break;
+        case LOAD_A_INTO_BC_POINTER:
+            {
+                uint16_t address = convert_bytes_to_word(regs.c, regs.b);
+                memory[address] = regs.a;
+            }
+
+            program_counter++;
+            break;
+        case INCREMENT_BC:
+            {
+                uint16_t bc = convert_bytes_to_word(regs.c, regs.b);
+                bc++;
+                regs.b = get_high_byte(bc);
+                regs.c = get_low_byte(bc);
+            }
+
+            program_counter++;
+            break;
+        case INCREMENT_B:
+            regs.b++;
+            set_z(regs.f, regs.b == 0);
+            set_n(regs.f, false);
+            set_h(regs.f, (regs.b & 0b00001111) == 0b00001111);
+            program_counter++;
+            break;
         case JUMP_IF_Z_IS_ZERO:
             // If the z flag is 0, jump some number of bytes based on the next byte
             if (!get_z(regs.f))
@@ -67,8 +107,8 @@ int main()
 
                 // Decrement the whole of hl before breaking it back into its parts
                 hl--;
-                regs.h = hl >> 8 & 0xFF;
-                regs.l = hl & 0xFF;
+                regs.h = get_high_byte(hl);
+                regs.l = get_low_byte(hl);
 
                 program_counter++;
             }
