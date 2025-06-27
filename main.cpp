@@ -40,6 +40,7 @@ int main()
 
     fclose(file);
 
+    // TODO anywhere we are writing to memory, verify that the memory is actually writable.
     uint16_t program_counter { 0x100 };
     uint16_t stack_pointer {};
     registers regs {};
@@ -79,6 +80,52 @@ int main()
             set_z(regs.f, regs.b == 0);
             set_n(regs.f, false);
             set_h(regs.f, (regs.b & 0b00001111) == 0b00001111);
+            program_counter++;
+            break;
+        case DECREMENT_B:
+            regs.b--;
+            set_z(regs.f, regs.b == 0);
+            set_n(regs.f, true);
+            set_h(regs.f, (regs.b & 0b00001111) == 0b00001111);
+            program_counter++;
+            break;
+        case LOAD_B_FROM_MEMORY:
+            regs.b = memory[program_counter + 1];
+            program_counter += 2;
+            break;
+        case ROTATE_A:
+            // NOTE - this doesn't use the typical way of setting the flags since three of them (z, n, and h) will always be set to 0.
+            regs.f = 0b00010000 & regs.a << 4;
+            regs.a = regs.a << 1 | get_c(regs.f);
+            program_counter++;
+            break;
+        case LOAD_SP_INTO_POINTER:
+            {
+                uint16_t address = convert_bytes_to_word(memory[program_counter + 1], memory[program_counter + 2]);
+                memory[address] = get_low_byte(stack_pointer);
+                memory[address + 1] = get_high_byte(stack_pointer);
+            }
+
+            program_counter += 3;
+            break;
+        case ADD_BC_TO_HL:
+            // TODO is there a way to determine the half carry and carry bits by just doing the math normally?
+            {
+                uint16_t bc = convert_bytes_to_word(regs.c, regs.b);
+                uint16_t hl = convert_bytes_to_word(regs.l, regs.h);
+
+                uint32_t result = bc + hl;
+                hl = result & 0xFFFF;
+
+                regs.h = get_high_byte(hl);
+                regs.l = get_low_byte(hl);
+
+                // While I normally use binary, using hex here for brevity since it's 16 bits.
+                set_c(regs.f, result > 0xFFFF);
+                set_h(regs.f, (hl & 0x0FFF) + (bc & 0x0FFF) > 0x0FFF);
+            }
+
+            set_n(regs.f, false);
             program_counter++;
             break;
         case JUMP_IF_Z_IS_ZERO:
