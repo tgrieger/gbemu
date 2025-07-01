@@ -93,7 +93,7 @@ int main()
             regs.b = memory[program_counter + 1];
             program_counter += 2;
             break;
-        case ROTATE_A:
+        case ROTATE_A_LEFT:
             // NOTE - this doesn't use the typical way of setting the flags since three of them (z, n, and h) will always be set to 0.
             regs.f = 0b00010000 & regs.a << 4;
             regs.a = regs.a << 1 | get_c(regs.f);
@@ -126,6 +126,45 @@ int main()
             }
 
             set_n(regs.f, false);
+            program_counter++;
+            break;
+        case LOAD_BC_POINTER_INTO_A:
+            regs.a = memory[convert_bytes_to_word(regs.c, regs.b)];
+            program_counter++;
+            break;
+        case DECREMENT_BC:
+            {
+                uint16_t bc = convert_bytes_to_word(regs.c, regs.b);
+                bc--;
+                regs.b = get_high_byte(bc);
+                regs.c = get_low_byte(bc);
+            }
+
+            program_counter++;
+            break;
+        case INCREMENT_C:
+            regs.c++;
+            set_z(regs.f, regs.c == 0);
+            set_n(regs.f, false);
+            set_h(regs.f, (regs.c & 0b00001111) == 0b00001111);
+            program_counter++;
+            break;
+        case DECREMENT_C:
+            regs.c--;
+            set_z(regs.f, regs.c == 0);
+            set_n(regs.f, true);
+            set_h(regs.f, (regs.c & 0b00001111) == 0b00001111);
+            program_counter++;
+            break;
+        case LOAD_C_FROM_MEMORY:
+            regs.c = memory[program_counter + 1];
+            program_counter += 2;
+            break;
+        case ROTATE_A_RIGHT:
+            // TODO double check this logic
+            // NOTE - this doesn't use the typical way of setting the flags since three of them (z, n, and h) will always be set to 0.
+            regs.f = 0b00010000 & regs.a >> 3;
+            regs.a = regs.a >> 1 | get_c(regs.f) << 7;
             program_counter++;
             break;
         case JUMP_IF_Z_IS_ZERO:
