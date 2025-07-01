@@ -95,7 +95,7 @@ int main()
             break;
         case ROTATE_A_LEFT:
             // NOTE - this doesn't use the typical way of setting the flags since three of them (z, n, and h) will always be set to 0.
-            regs.f = 0b00010000 & regs.a << 4;
+            regs.f = 0b00010000 & regs.a >> 3;
             regs.a = regs.a << 1 | get_c(regs.f);
             program_counter++;
             break;
@@ -161,9 +161,8 @@ int main()
             program_counter += 2;
             break;
         case ROTATE_A_RIGHT:
-            // TODO double check this logic
             // NOTE - this doesn't use the typical way of setting the flags since three of them (z, n, and h) will always be set to 0.
-            regs.f = 0b00010000 & regs.a >> 3;
+            regs.f = 0b00010000 & regs.a << 4;
             regs.a = regs.a >> 1 | get_c(regs.f) << 7;
             program_counter++;
             break;
