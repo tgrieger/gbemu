@@ -6,7 +6,7 @@
 #include "opcode.h"
 #include "register.h"
 
-uint16_t convert_bytes_to_word(unsigned char low, unsigned char high)
+uint16_t convert_bytes_to_word(const unsigned char high, const unsigned char low)
 {
     return static_cast<uint16_t>(low) | static_cast<uint16_t>(high) << 8;
 }
@@ -19,6 +19,13 @@ unsigned char get_high_byte(const uint16_t word)
 unsigned char get_low_byte(const uint16_t word)
 {
     return word & 0xFF;
+}
+
+void load_uint16_t_from_memory(unsigned char &high, unsigned char &low, const unsigned char memory[], uint16_t &program_counter)
+{
+    high = memory[program_counter + 2];
+    low = memory[program_counter + 1];
+    program_counter += 3;
 }
 
 int main()
@@ -50,16 +57,14 @@ int main()
         switch (memory[program_counter])
         {
         case NO_OP:
-           program_counter++;
-           break;
+            program_counter++;
+            break;
         case LOAD_BC_FROM_MEMORY:
-            regs.b = memory[program_counter + 2];
-            regs.c = memory[program_counter + 1];
-            program_counter += 3;
+            load_uint16_t_from_memory(regs.b, regs.c, memory, program_counter);
             break;
         case LOAD_A_INTO_BC_POINTER:
             {
-                uint16_t address = convert_bytes_to_word(regs.c, regs.b);
+                uint16_t address = convert_bytes_to_word(regs.b, regs.c);
                 memory[address] = regs.a;
             }
 
@@ -67,7 +72,7 @@ int main()
             break;
         case INCREMENT_BC:
             {
-                uint16_t bc = convert_bytes_to_word(regs.c, regs.b);
+                uint16_t bc = convert_bytes_to_word(regs.b, regs.c);
                 bc++;
                 regs.b = get_high_byte(bc);
                 regs.c = get_low_byte(bc);
@@ -101,7 +106,7 @@ int main()
             break;
         case LOAD_SP_INTO_POINTER:
             {
-                uint16_t address = convert_bytes_to_word(memory[program_counter + 1], memory[program_counter + 2]);
+                uint16_t address = convert_bytes_to_word(memory[program_counter + 2], memory[program_counter + 1]);
                 memory[address] = get_low_byte(stack_pointer);
                 memory[address + 1] = get_high_byte(stack_pointer);
             }
@@ -111,8 +116,8 @@ int main()
         case ADD_BC_TO_HL:
             // TODO is there a way to determine the half carry and carry bits by just doing the math normally?
             {
-                uint16_t bc = convert_bytes_to_word(regs.c, regs.b);
-                uint16_t hl = convert_bytes_to_word(regs.l, regs.h);
+                uint16_t bc = convert_bytes_to_word(regs.b, regs.c);
+                uint16_t hl = convert_bytes_to_word(regs.h, regs.l);
 
                 uint32_t result = bc + hl;
                 hl = result & 0xFFFF;
@@ -129,12 +134,12 @@ int main()
             program_counter++;
             break;
         case LOAD_BC_POINTER_INTO_A:
-            regs.a = memory[convert_bytes_to_word(regs.c, regs.b)];
+            regs.a = memory[convert_bytes_to_word(regs.b, regs.c)];
             program_counter++;
             break;
         case DECREMENT_BC:
             {
-                uint16_t bc = convert_bytes_to_word(regs.c, regs.b);
+                uint16_t bc = convert_bytes_to_word(regs.b, regs.c);
                 bc--;
                 regs.b = get_high_byte(bc);
                 regs.c = get_low_byte(bc);
@@ -166,6 +171,23 @@ int main()
             regs.a = regs.a >> 1 | get_c(regs.f) << 7;
             program_counter++;
             break;
+        case STOP:
+            // TODO implement stop
+            program_counter += 2;
+            break;
+        case LOAD_DE_FROM_MEMORY:
+            regs.d = memory[program_counter + 2];
+            regs.e = memory[program_counter + 1];
+            program_counter += 3;
+            break;
+        case LOAD_A_INT_DE_POINTER:
+            {
+                const uint16_t address = convert_bytes_to_word(regs.d, regs.e);
+                memory[address] = regs.a;
+            }
+
+            program_counter++;
+            break;
         case JUMP_IF_Z_IS_ZERO:
             // If the z flag is 0, jump some number of bytes based on the next byte
             if (!get_z(regs.f))
@@ -182,12 +204,12 @@ int main()
             program_counter += 3;
             break;
         case LOAD_SP_FROM_MEMORY:
-            stack_pointer = convert_bytes_to_word(memory[program_counter + 1], memory[program_counter + 2]);
+            stack_pointer = convert_bytes_to_word(memory[program_counter + 2], memory[program_counter + 1]);
             program_counter += 3;
             break;
         case LOAD_A_INTO_HL_CONTENTS_AND_DECREMENT_HL:
             {
-                uint16_t hl = convert_bytes_to_word(regs.l, regs.h);
+                uint16_t hl = convert_bytes_to_word(regs.h, regs.l);
                 memory[hl] = regs.a;
 
                 // Decrement the whole of hl before breaking it back into its parts
@@ -219,11 +241,11 @@ int main()
             program_counter++;
             break;
         case JUMP:
-            program_counter = convert_bytes_to_word(memory[program_counter + 1], memory[program_counter + 2]);
+            program_counter = convert_bytes_to_word(memory[program_counter + 2], memory[program_counter + 1]);
             break;
         case LOAD_A_FROM_LOW_POINTER:
             {
-                uint16_t address = convert_bytes_to_word(memory[program_counter + 1], 0xFF);
+                uint16_t address = convert_bytes_to_word(0xFF, memory[program_counter + 1]);
                 regs.a = memory[address];
             }
 
@@ -234,7 +256,7 @@ int main()
             program_counter++;
             break;
         case LOAD_A_FROM_POINTER:
-            regs.a = memory[convert_bytes_to_word(memory[program_counter + 1], memory[program_counter + 2])];
+            regs.a = memory[convert_bytes_to_word(memory[program_counter + 2], memory[program_counter + 1])];
             program_counter += 3;
             break;
         case COMPARE_A_TO_MEMORY:
