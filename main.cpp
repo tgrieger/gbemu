@@ -80,13 +80,44 @@ unsigned char decrement_half_register(unsigned char &half)
     return 1;
 }
 
-int run_op_code()
+unsigned char load_half_register_from_memory(unsigned char &half)
+{
+    half = memory[program_counter + 1];
+    program_counter += 2;
+
+    return 2;
+}
+
+unsigned char rotate_half_register_left(unsigned char &half)
+{
+    // NOTE - this doesn't use the typical way of setting the flags since three of them (z, n, and h) will always be set to 0.
+    regs.f = 0b00010000 & half >> 3;
+    half = half << 1 | get_c(regs.f);
+    program_counter++;
+
+    return 1;
+}
+
+unsigned char load_full_register_into_pointer(unsigned char high, unsigned char low)
+{
+    // TODO check if the target memory is actually writable
+    uint16_t address = convert_bytes_to_word(memory[program_counter + 2], memory[program_counter + 1]);
+    memory[address] = low;
+    memory[address + 1] = high;
+    program_counter += 3;
+
+    // TODO this is for 0x08, is it the same for the others or is this one special?
+    // TODO are there even others?
+    return 5;
+}
+
+unsigned char run_op_code()
 {
     switch (memory[program_counter])
     {
     case NO_OP:
         program_counter++;
-        break;
+        return 1;
     case LOAD_BC_FROM_MEMORY:
         return load_full_register_from_memory(regs.b, regs.c);
     case LOAD_A_INTO_BC_POINTER:
@@ -94,30 +125,15 @@ int run_op_code()
     case INCREMENT_BC:
         return increment_full_register(regs.b, regs.c);
     case INCREMENT_B:
-        increment_half_register(regs.b);
-        break;
+        return increment_half_register(regs.b);
     case DECREMENT_B:
-        decrement_half_register(regs.b);
-        break;
+        return decrement_half_register(regs.b);
     case LOAD_B_FROM_MEMORY:
-        regs.b = memory[program_counter + 1];
-        program_counter += 2;
-        break;
+        return load_half_register_from_memory(regs.b);
     case ROTATE_A_LEFT:
-        // NOTE - this doesn't use the typical way of setting the flags since three of them (z, n, and h) will always be set to 0.
-        regs.f = 0b00010000 & regs.a >> 3;
-        regs.a = regs.a << 1 | get_c(regs.f);
-        program_counter++;
-        break;
+        return rotate_half_register_left(regs.a);
     case LOAD_SP_INTO_POINTER:
-        {
-            uint16_t address = convert_bytes_to_word(memory[program_counter + 2], memory[program_counter + 1]);
-            memory[address] = get_low_byte(stack_pointer);
-            memory[address + 1] = get_high_byte(stack_pointer);
-        }
-
-        program_counter += 3;
-        break;
+        return load_full_register_into_pointer(get_high_byte(stack_pointer), get_low_byte(stack_pointer));
     case ADD_BC_TO_HL:
         // TODO is there a way to determine the half carry and carry bits by just doing the math normally?
         {
@@ -290,13 +306,13 @@ int run_op_code()
             break;
         default:
             std::cerr << "Unknown extended opcode: 0x" << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(memory[program_counter + 1]) << " at pc 0x" << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(program_counter + 1) << '\n';
-            return 1;
+            throw std::runtime_error("Unknown extended opcode: 0x");
         }
         program_counter += 2;
         break;
     default:
         std::cerr << "Unknown opcode: 0x" << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(memory[program_counter]) << " at pc 0x" << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(program_counter) << '\n';
-        return -1;
+        throw std::runtime_error("Unknown opcode: 0x");
     }
 
     // TODO remove this once all cases return
@@ -322,9 +338,6 @@ int main()
 
     while (true)
     {
-        if (const int result = run_op_code(); result == -1)
-        {
-            return 1;
-        }
+        run_op_code();
     }
 }
