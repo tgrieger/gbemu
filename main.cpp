@@ -6,6 +6,13 @@
 #include "opcode.h"
 #include "register.h"
 
+// TODO anywhere we are writing to memory, verify that the memory is actually writable.
+unsigned char memory[0xFFFF];
+uint16_t program_counter { 0x100 };
+uint16_t stack_pointer {};
+registers regs {};
+bool ime { false };
+
 uint16_t convert_bytes_to_word(const unsigned char high, const unsigned char low)
 {
     return static_cast<uint16_t>(low) | static_cast<uint16_t>(high) << 8;
@@ -21,19 +28,285 @@ unsigned char get_low_byte(const uint16_t word)
     return word & 0xFF;
 }
 
-void load_uint16_t_from_memory(unsigned char &high, unsigned char &low, const unsigned char memory[], uint16_t &program_counter)
+unsigned char load_full_register_from_memory(unsigned char &high, unsigned char &low)
 {
     high = memory[program_counter + 2];
     low = memory[program_counter + 1];
     program_counter += 3;
+
+    return 3;
+}
+
+unsigned char load_half_register_into_pointer(const unsigned char value, const unsigned char high, const unsigned char low)
+{
+    const uint16_t address = convert_bytes_to_word(high, low);
+    memory[address] = value;
+    program_counter++;
+
+    return 2;
+}
+
+unsigned char increment_full_register(unsigned char &high, unsigned char &low)
+{
+    uint16_t full = convert_bytes_to_word(high, low);
+    full++;
+    high = get_high_byte(full);
+    low = get_low_byte(full);
+
+    program_counter++;
+
+    return 2;
+}
+
+unsigned char increment_half_register(unsigned char &half)
+{
+    half++;
+    set_z(regs.f, half == 0);
+    set_n(regs.f, false);
+    set_h(regs.f, (half & 0b00001111) == 0b00001111);
+    program_counter++;
+
+    return 1;
+}
+
+unsigned char decrement_half_register(unsigned char &half)
+{
+    half--;
+    set_z(regs.f, half == 0);
+    set_n(regs.f, true);
+    set_h(regs.f, (half & 0b00001111) == 0b00001111);
+    program_counter++;
+
+    return 1;
+}
+
+int run_op_code()
+{
+    switch (memory[program_counter])
+    {
+    case NO_OP:
+        program_counter++;
+        break;
+    case LOAD_BC_FROM_MEMORY:
+        return load_full_register_from_memory(regs.b, regs.c);
+    case LOAD_A_INTO_BC_POINTER:
+        return load_half_register_into_pointer(regs.a, regs.b, regs.c);
+    case INCREMENT_BC:
+        return increment_full_register(regs.b, regs.c);
+    case INCREMENT_B:
+        increment_half_register(regs.b);
+        break;
+    case DECREMENT_B:
+        decrement_half_register(regs.b);
+        break;
+    case LOAD_B_FROM_MEMORY:
+        regs.b = memory[program_counter + 1];
+        program_counter += 2;
+        break;
+    case ROTATE_A_LEFT:
+        // NOTE - this doesn't use the typical way of setting the flags since three of them (z, n, and h) will always be set to 0.
+        regs.f = 0b00010000 & regs.a >> 3;
+        regs.a = regs.a << 1 | get_c(regs.f);
+        program_counter++;
+        break;
+    case LOAD_SP_INTO_POINTER:
+        {
+            uint16_t address = convert_bytes_to_word(memory[program_counter + 2], memory[program_counter + 1]);
+            memory[address] = get_low_byte(stack_pointer);
+            memory[address + 1] = get_high_byte(stack_pointer);
+        }
+
+        program_counter += 3;
+        break;
+    case ADD_BC_TO_HL:
+        // TODO is there a way to determine the half carry and carry bits by just doing the math normally?
+        {
+            uint16_t bc = convert_bytes_to_word(regs.b, regs.c);
+            uint16_t hl = convert_bytes_to_word(regs.h, regs.l);
+
+            uint32_t result = bc + hl;
+            hl = result & 0xFFFF;
+
+            regs.h = get_high_byte(hl);
+            regs.l = get_low_byte(hl);
+
+            // While I normally use binary, using hex here for brevity since it's 16 bits.
+            set_c(regs.f, result > 0xFFFF);
+            set_h(regs.f, (hl & 0x0FFF) + (bc & 0x0FFF) > 0x0FFF);
+        }
+
+        set_n(regs.f, false);
+        program_counter++;
+        break;
+    case LOAD_BC_POINTER_INTO_A:
+        regs.a = memory[convert_bytes_to_word(regs.b, regs.c)];
+        program_counter++;
+        break;
+    case DECREMENT_BC:
+        {
+            uint16_t bc = convert_bytes_to_word(regs.b, regs.c);
+            bc--;
+            regs.b = get_high_byte(bc);
+            regs.c = get_low_byte(bc);
+        }
+
+        program_counter++;
+        break;
+    case INCREMENT_C:
+        regs.c++;
+        set_z(regs.f, regs.c == 0);
+        set_n(regs.f, false);
+        set_h(regs.f, (regs.c & 0b00001111) == 0b00001111);
+        program_counter++;
+        break;
+    case DECREMENT_C:
+        regs.c--;
+        set_z(regs.f, regs.c == 0);
+        set_n(regs.f, true);
+        set_h(regs.f, (regs.c & 0b00001111) == 0b00001111);
+        program_counter++;
+        break;
+    case LOAD_C_FROM_MEMORY:
+        regs.c = memory[program_counter + 1];
+        program_counter += 2;
+        break;
+    case ROTATE_A_RIGHT:
+        // NOTE - this doesn't use the typical way of setting the flags since three of them (z, n, and h) will always be set to 0.
+        regs.f = 0b00010000 & regs.a << 4;
+        regs.a = regs.a >> 1 | get_c(regs.f) << 7;
+        program_counter++;
+        break;
+    case STOP:
+        // TODO implement stop
+        program_counter += 2;
+        break;
+    case LOAD_DE_FROM_MEMORY:
+        regs.d = memory[program_counter + 2];
+        regs.e = memory[program_counter + 1];
+        program_counter += 3;
+        break;
+    case LOAD_A_INT_DE_POINTER:
+        {
+            const uint16_t address = convert_bytes_to_word(regs.d, regs.e);
+            memory[address] = regs.a;
+        }
+
+        program_counter++;
+        break;
+    case JUMP_IF_Z_IS_ZERO:
+        // If the z flag is 0, jump some number of bytes based on the next byte
+        if (!get_z(regs.f))
+        {
+            // TODO learn more about pros and cons of static_cast
+            program_counter += static_cast<char>(memory[program_counter + 1]);
+        }
+
+        program_counter += 2;
+        break;
+    case LOAD_HL_FROM_MEMORY:
+        regs.l = memory[program_counter + 1];
+        regs.h = memory[program_counter + 2];
+        program_counter += 3;
+        break;
+    case LOAD_SP_FROM_MEMORY:
+        stack_pointer = convert_bytes_to_word(memory[program_counter + 2], memory[program_counter + 1]);
+        program_counter += 3;
+        break;
+    case LOAD_A_INTO_HL_CONTENTS_AND_DECREMENT_HL:
+        {
+            uint16_t hl = convert_bytes_to_word(regs.h, regs.l);
+            memory[hl] = regs.a;
+
+            // Decrement the whole of hl before breaking it back into its parts
+            hl--;
+            regs.h = get_high_byte(hl);
+            regs.l = get_low_byte(hl);
+
+            program_counter++;
+        }
+        break;
+    case XOR_A:
+        // This case will always result in A being 0, no need to actually XOR A with A
+        // regs.a = regs.a ^ regs.a;
+        regs.a = 0;
+
+        // Because A will always be 0, we will always clear all flags except Z and set Z to 1
+        /*
+        regs.f = 0;
+        if (regs.a == 0)
+        {
+            // Set Z to 1 if the result of the XOR was 0
+            regs.f |= 0b00000001;
+        }
+        */
+
+        // NOTE - this doesn't use the typical set method to set z to 1 and all other flags to 0
+        regs.f = 0b10000000;
+
+        program_counter++;
+        break;
+    case JUMP:
+        program_counter = convert_bytes_to_word(memory[program_counter + 2], memory[program_counter + 1]);
+        break;
+    case LOAD_A_FROM_LOW_POINTER:
+        {
+            uint16_t address = convert_bytes_to_word(0xFF, memory[program_counter + 1]);
+            regs.a = memory[address];
+        }
+
+        program_counter += 2;
+        break;
+    case DISABLE_IME:
+        ime = false;
+        program_counter++;
+        break;
+    case LOAD_A_FROM_POINTER:
+        regs.a = memory[convert_bytes_to_word(memory[program_counter + 2], memory[program_counter + 1])];
+        program_counter += 3;
+        break;
+    case COMPARE_A_TO_MEMORY:
+        set_n(regs.f, true);
+        set_z(regs.f, regs.a == memory[program_counter + 1]);
+
+        // TODO understand how the half carry and carry flags are being set better
+        set_h(regs.f, (regs.a & 0x0F) < (memory[program_counter + 1] & 0x0F));
+        set_c(regs.f, regs.a < memory[program_counter + 1]);
+
+        program_counter += 2;
+        break;
+    case USE_EXTENDED_OP_CODE:
+        switch (memory[program_counter + 1])
+        {
+        case COPY_INVERSE_BIT_7_H_TO_Z:
+            // Set the h flag to 1
+            set_h(regs.f, true);
+
+            // Set the c flag to 0
+            set_c(regs.f, false);
+
+            // Set the z flag to the compliment of the 7th bit of the h register
+            // General formula for setting the nth bit to x: `number = number & ~(1 << n) | (x << n)`
+            set_z(regs.f, ~(regs.h >> 7) & 0b00000001);
+            break;
+        default:
+            std::cerr << "Unknown extended opcode: 0x" << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(memory[program_counter + 1]) << " at pc 0x" << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(program_counter + 1) << '\n';
+            return 1;
+        }
+        program_counter += 2;
+        break;
+    default:
+        std::cerr << "Unknown opcode: 0x" << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(memory[program_counter]) << " at pc 0x" << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(program_counter) << '\n';
+        return -1;
+    }
+
+    // TODO remove this once all cases return
+    return 0;
 }
 
 int main()
 {
-    unsigned char memory[0xFFFF];
     FILE *file;
-    errno_t error = fopen_s(&file, "C:\\Users\\tgrieger\\Source\\repos\\gbemu\\artifacts\\bgbtest.gb", "rb");
-    if (error)
+    if (const errno_t error = fopen_s(&file, "C:\\Users\\tgrieger\\Source\\repos\\gbemu\\artifacts\\bgbtest.gb", "rb"))
     {
         std::cout << error << std::endl;
     }
@@ -47,254 +320,11 @@ int main()
 
     fclose(file);
 
-    // TODO anywhere we are writing to memory, verify that the memory is actually writable.
-    uint16_t program_counter { 0x100 };
-    uint16_t stack_pointer {};
-    registers regs {};
-    bool ime { false };
     while (true)
     {
-        switch (memory[program_counter])
+        if (const int result = run_op_code(); result == -1)
         {
-        case NO_OP:
-            program_counter++;
-            break;
-        case LOAD_BC_FROM_MEMORY:
-            load_uint16_t_from_memory(regs.b, regs.c, memory, program_counter);
-            break;
-        case LOAD_A_INTO_BC_POINTER:
-            {
-                uint16_t address = convert_bytes_to_word(regs.b, regs.c);
-                memory[address] = regs.a;
-            }
-
-            program_counter++;
-            break;
-        case INCREMENT_BC:
-            {
-                uint16_t bc = convert_bytes_to_word(regs.b, regs.c);
-                bc++;
-                regs.b = get_high_byte(bc);
-                regs.c = get_low_byte(bc);
-            }
-
-            program_counter++;
-            break;
-        case INCREMENT_B:
-            regs.b++;
-            set_z(regs.f, regs.b == 0);
-            set_n(regs.f, false);
-            set_h(regs.f, (regs.b & 0b00001111) == 0b00001111);
-            program_counter++;
-            break;
-        case DECREMENT_B:
-            regs.b--;
-            set_z(regs.f, regs.b == 0);
-            set_n(regs.f, true);
-            set_h(regs.f, (regs.b & 0b00001111) == 0b00001111);
-            program_counter++;
-            break;
-        case LOAD_B_FROM_MEMORY:
-            regs.b = memory[program_counter + 1];
-            program_counter += 2;
-            break;
-        case ROTATE_A_LEFT:
-            // NOTE - this doesn't use the typical way of setting the flags since three of them (z, n, and h) will always be set to 0.
-            regs.f = 0b00010000 & regs.a >> 3;
-            regs.a = regs.a << 1 | get_c(regs.f);
-            program_counter++;
-            break;
-        case LOAD_SP_INTO_POINTER:
-            {
-                uint16_t address = convert_bytes_to_word(memory[program_counter + 2], memory[program_counter + 1]);
-                memory[address] = get_low_byte(stack_pointer);
-                memory[address + 1] = get_high_byte(stack_pointer);
-            }
-
-            program_counter += 3;
-            break;
-        case ADD_BC_TO_HL:
-            // TODO is there a way to determine the half carry and carry bits by just doing the math normally?
-            {
-                uint16_t bc = convert_bytes_to_word(regs.b, regs.c);
-                uint16_t hl = convert_bytes_to_word(regs.h, regs.l);
-
-                uint32_t result = bc + hl;
-                hl = result & 0xFFFF;
-
-                regs.h = get_high_byte(hl);
-                regs.l = get_low_byte(hl);
-
-                // While I normally use binary, using hex here for brevity since it's 16 bits.
-                set_c(regs.f, result > 0xFFFF);
-                set_h(regs.f, (hl & 0x0FFF) + (bc & 0x0FFF) > 0x0FFF);
-            }
-
-            set_n(regs.f, false);
-            program_counter++;
-            break;
-        case LOAD_BC_POINTER_INTO_A:
-            regs.a = memory[convert_bytes_to_word(regs.b, regs.c)];
-            program_counter++;
-            break;
-        case DECREMENT_BC:
-            {
-                uint16_t bc = convert_bytes_to_word(regs.b, regs.c);
-                bc--;
-                regs.b = get_high_byte(bc);
-                regs.c = get_low_byte(bc);
-            }
-
-            program_counter++;
-            break;
-        case INCREMENT_C:
-            regs.c++;
-            set_z(regs.f, regs.c == 0);
-            set_n(regs.f, false);
-            set_h(regs.f, (regs.c & 0b00001111) == 0b00001111);
-            program_counter++;
-            break;
-        case DECREMENT_C:
-            regs.c--;
-            set_z(regs.f, regs.c == 0);
-            set_n(regs.f, true);
-            set_h(regs.f, (regs.c & 0b00001111) == 0b00001111);
-            program_counter++;
-            break;
-        case LOAD_C_FROM_MEMORY:
-            regs.c = memory[program_counter + 1];
-            program_counter += 2;
-            break;
-        case ROTATE_A_RIGHT:
-            // NOTE - this doesn't use the typical way of setting the flags since three of them (z, n, and h) will always be set to 0.
-            regs.f = 0b00010000 & regs.a << 4;
-            regs.a = regs.a >> 1 | get_c(regs.f) << 7;
-            program_counter++;
-            break;
-        case STOP:
-            // TODO implement stop
-            program_counter += 2;
-            break;
-        case LOAD_DE_FROM_MEMORY:
-            regs.d = memory[program_counter + 2];
-            regs.e = memory[program_counter + 1];
-            program_counter += 3;
-            break;
-        case LOAD_A_INT_DE_POINTER:
-            {
-                const uint16_t address = convert_bytes_to_word(regs.d, regs.e);
-                memory[address] = regs.a;
-            }
-
-            program_counter++;
-            break;
-        case JUMP_IF_Z_IS_ZERO:
-            // If the z flag is 0, jump some number of bytes based on the next byte
-            if (!get_z(regs.f))
-            {
-                // TODO learn more about pros and cons of static_cast
-                program_counter += static_cast<char>(memory[program_counter + 1]);
-            }
-
-            program_counter += 2;
-            break;
-        case LOAD_HL_FROM_MEMORY:
-            regs.l = memory[program_counter + 1];
-            regs.h = memory[program_counter + 2];
-            program_counter += 3;
-            break;
-        case LOAD_SP_FROM_MEMORY:
-            stack_pointer = convert_bytes_to_word(memory[program_counter + 2], memory[program_counter + 1]);
-            program_counter += 3;
-            break;
-        case LOAD_A_INTO_HL_CONTENTS_AND_DECREMENT_HL:
-            {
-                uint16_t hl = convert_bytes_to_word(regs.h, regs.l);
-                memory[hl] = regs.a;
-
-                // Decrement the whole of hl before breaking it back into its parts
-                hl--;
-                regs.h = get_high_byte(hl);
-                regs.l = get_low_byte(hl);
-
-                program_counter++;
-            }
-            break;
-        case XOR_A:
-            // This case will always result in A being 0, no need to actually XOR A with A
-            // regs.a = regs.a ^ regs.a;
-            regs.a = 0;
-
-            // Because A will always be 0, we will always clear all flags except Z and set Z to 1
-            /*
-            regs.f = 0;
-            if (regs.a == 0)
-            {
-                // Set Z to 1 if the result of the XOR was 0
-                regs.f |= 0b00000001;
-            }
-            */
-
-            // NOTE - this doesn't use the typical set method to set z to 1 and all other flags to 0
-            regs.f = 0b10000000;
-
-            program_counter++;
-            break;
-        case JUMP:
-            program_counter = convert_bytes_to_word(memory[program_counter + 2], memory[program_counter + 1]);
-            break;
-        case LOAD_A_FROM_LOW_POINTER:
-            {
-                uint16_t address = convert_bytes_to_word(0xFF, memory[program_counter + 1]);
-                regs.a = memory[address];
-            }
-
-            program_counter += 2;
-            break;
-        case DISABLE_IME:
-            ime = false;
-            program_counter++;
-            break;
-        case LOAD_A_FROM_POINTER:
-            regs.a = memory[convert_bytes_to_word(memory[program_counter + 2], memory[program_counter + 1])];
-            program_counter += 3;
-            break;
-        case COMPARE_A_TO_MEMORY:
-            set_n(regs.f, true);
-            set_z(regs.f, regs.a == memory[program_counter + 1]);
-
-            // TODO understand how the half carry and carry flags are being set better
-            set_h(regs.f, (regs.a & 0x0F) < (memory[program_counter + 1] & 0x0F));
-            set_c(regs.f, regs.a < memory[program_counter + 1]);
-
-            program_counter += 2;
-            break;
-        case USE_EXTENDED_OP_CODE:
-            switch (memory[program_counter + 1])
-            {
-            case COPY_INVERSE_BIT_7_H_TO_Z:
-                // Set the h flag to 1
-                set_h(regs.f, true);
-
-                // Set the c flag to 0
-                set_c(regs.f, false);
-
-                // Set the z flag to the compliment of the 7th bit of the h register
-                // General formula for setting the nth bit to x: `number = number & ~(1 << n) | (x << n)`
-                set_z(regs.f, ~(regs.h >> 7) & 0b00000001);
-                break;
-            default:
-                std::cerr << "Unknown extended opcode: 0x" << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(memory[program_counter + 1]) << " at pc 0x" << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(program_counter + 1) << '\n';
-                return 1;
-            }
-            program_counter += 2;
-            break;
-        default:
-            // TODO is there a way to format to hex?
-            std::cerr << "Unknown opcode: 0x" << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(memory[program_counter]) << " at pc 0x" << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(program_counter) << '\n';
             return 1;
         }
     }
-
-    return 0;
 }
